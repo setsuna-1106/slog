@@ -488,9 +488,188 @@ def cmd_path(args):
         print(dim("目录不存在"))
 
 
+# ---------- TUI ----------
+
+ANSI_TO_CURSES = {"32": "green", "33": "yellow", "31": "red",
+                  "35": "magenta", "36": "cyan"}
+
+
+def clip_cjk(s, width):
+    """按显示宽度截断，避免宽字符越界。"""
+    out, w = "", 0
+    for ch in s:
+        cw = 2 if ord(ch) > 0x2E80 else 1
+        if w + cw > width:
+            break
+        out += ch
+        w += cw
+    return out
+
+
+def _log_outline(day, text):
+    """把一篇日志整理成 [(文字, 类型, 所属板块)]，供 TUI 右栏渲染。"""
+    out = [(f"{day.isoformat()} {WEEKDAYS[day.weekday()]}", "title", None)]
+    section = None
+    for line in text.splitlines():
+        m = HEADING_RE.match(line)
+        if m:
+            if len(m.group(1)) == 1:
+                continue
+            section = m.group(2)
+            out.append(("", "gap", None))
+            out.append((section, "header", section))
+            continue
+        s = line.strip()
+        bm = BULLET_RE.match(s) if s else None
+        if bm:
+            checked, content = bm.group(1), bm.group(2)
+            prefix = ("- [x] " if checked in ("x", "X")
+                      else "- [ ] " if checked else "- ")
+            if not content:
+                out.append(("  " + prefix, "empty", section))
+            elif checked in ("x", "X"):
+                out.append(("  " + prefix + content, "done", section))
+            else:
+                out.append(("  " + prefix + content, "item", section))
+        elif s:
+            out.append(("  " + line, "item", section))
+    return out
+
+
+def _tui_main(stdscr):
+    import curses
+
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    stdscr.keypad(True)
+
+    pairs = {}
+    if curses.has_colors():
+        curses.start_color()
+        curses.use_default_colors()
+        for i, name in enumerate(("green", "yellow", "red", "magenta", "cyan"), 1):
+            curses.init_pair(i, getattr(curses, f"COLOR_{name.upper()}"), -1)
+            pairs[name] = curses.color_pair(i)
+
+    def draw(dates, sel, top):
+        stdscr.erase()
+        h, w = stdscr.getmaxyx()
+        if h < 8 or w < 60:
+            try:
+                stdscr.addstr(0, 0, clip_cjk("终端窗口太小（至少 60x8）", w - 1))
+            except curses.error:
+                pass
+            stdscr.refresh()
+            return
+        lw, rows = 34, h - 3
+        try:
+            stdscr.addstr(0, 0, f"slog 学习日志 · {len(dates)} 篇", curses.A_BOLD)
+        except curses.error:
+            pass
+        for i, day in enumerate(dates[top:top + rows]):
+            secs = parse_sections(read_text(log_file(log_dir(), day)))
+            learned = nonempty_bullets(secs.get(SEC_LEARNED, []))
+            first = clip_cjk(learned[0][1], lw - 15) if learned else "—"
+            label = f"{day.isoformat()} {WEEKDAYS[day.weekday()]} {first}"
+            attr = curses.A_REVERSE if top + i == sel else 0
+            try:
+                stdscr.addstr(1 + i, 0, clip_cjk(label, lw), attr)
+            except curses.error:
+                pass
+        for y in range(1, h - 1):
+            try:
+                stdscr.addstr(y, lw, "│", curses.A_DIM)
+            except curses.error:
+                pass
+        if dates:
+            day = dates[sel]
+            outline = _log_outline(day, read_text(log_file(log_dir(), day)))
+            x, pw = lw + 3, w - lw - 4
+            y = 1
+            for text, kind, sec in outline:
+                if y >= h - 1:
+                    break
+                if kind == "gap":
+                    y += 1
+                    continue
+                attr = 0
+                if kind == "title":
+                    attr = curses.A_BOLD
+                elif kind == "header":
+                    code = next(iter(SECTION_STYLE.get(sec, ("0",))))
+                    attr = curses.A_BOLD | pairs.get(ANSI_TO_CURSES.get(code, ""), 0)
+                elif kind in ("done", "empty"):
+                    attr = curses.A_DIM
+                try:
+                    stdscr.addstr(y, x, clip_cjk(text, pw), attr)
+                except curses.error:
+                    pass
+                y += 1
+        else:
+            try:
+                stdscr.addstr(h // 2, 2, "还没有任何记录，按 t 创建今天")
+            except curses.error:
+                pass
+        try:
+            stdscr.addstr(h - 1, 0, "↑↓/jk 选择 · Enter/e 编辑 · t 今天 · q 退出",
+                          curses.A_DIM)
+        except curses.error:
+            pass
+        stdscr.refresh()
+
+    sel = top = 0
+    dates = list(reversed(log_dates(log_dir())))
+    while True:
+        h = stdscr.getmaxyx()[0]
+        rows = max(1, h - 3)
+        sel = min(sel, max(0, len(dates) - 1))
+        top = max(0, min(top, sel))
+        if sel >= top + rows:
+            top = sel - rows + 1
+        draw(dates, sel, top)
+        key = stdscr.getch()
+        if key in (ord("q"), 27):
+            return
+        if key in (curses.KEY_UP, ord("k")) and dates:
+            sel = max(0, sel - 1)
+        elif key in (curses.KEY_DOWN, ord("j")) and dates:
+            sel = min(len(dates) - 1, sel + 1)
+        elif key == ord("t"):
+            day = date.today()
+            ensure_log(day)
+            dates = list(reversed(log_dates(log_dir())))
+            sel, top = dates.index(day), 0
+        elif key in (curses.KEY_ENTER, 10, 13, ord("e")):
+            day = dates[sel] if dates else date.today()
+            f = ensure_log(day)
+            curses.endwin()
+            open_in_editor(f)
+            snapshot(log_dir(), day)
+            stdscr.refresh()
+            dates = list(reversed(log_dates(log_dir())))
+
+
+def cmd_tui(args):
+    try:
+        import curses
+    except ImportError:
+        die("当前 Python 缺少 curses，无法启动 TUI")
+    try:
+        curses.wrapper(_tui_main)
+    except KeyboardInterrupt:
+        pass
+    except curses.error:
+        die("无法初始化终端界面，请在真实终端中运行")
+
+
 # ---------- 入口 ----------
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["help"]:
+        argv = ["--help"]
     p = argparse.ArgumentParser(
         prog="slog",
         description="slog — 极简学习记录：一天一个 Markdown，五个板块，编辑器书写。",
@@ -504,6 +683,8 @@ def main(argv=None):
             "  slog search 光学    全文搜索\n"
             "  slog review         汇总还没懂/卡点等遗留问题\n"
             "  slog stats          连续天数与科目分布\n"
+            "  slog tui            交互式浏览（方向键选择，回车编辑）\n"
+            "  slog help           显示本帮助\n"
             "\n"
             "环境变量:\n"
             "  SLOG_DIR  日志目录（默认 ~/Desktop/University/Learning log）\n"
@@ -525,6 +706,7 @@ def main(argv=None):
     sp.add_argument("keyword", help="关键词")
 
     sub.add_parser("review", help="汇总最近一篇的还没懂/卡点，标注首次出现日期")
+    sub.add_parser("tui", help="交互式浏览（curses 界面）")
 
     sub.add_parser("stats", help="统计：记录天数、连续天数、科目分布")
     sub.add_parser("path", help="显示日志目录")
@@ -537,6 +719,7 @@ def main(argv=None):
         "recent": cmd_recent,
         "search": cmd_search,
         "review": cmd_review,
+        "tui": cmd_tui,
         "stats": cmd_stats,
         "path": cmd_path,
     }
