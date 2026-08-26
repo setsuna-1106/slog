@@ -10,11 +10,10 @@
 
 ```zsh
 git clone https://github.com/setsuna-1106/slog.git ~/Desktop/slog
-echo 'alias slog="python3 ~/Desktop/slog/slog.py"' >> ~/.zshrc
-source ~/.zshrc
+ln -s ~/Desktop/slog/slog.py ~/.local/bin/slog
 ```
 
-克隆路径可自定，别名同步修改即可。
+克隆路径可自定，软链接指向新路径即可（`~/.local/bin` 需在 PATH 中）。
 
 ## 使用
 
@@ -34,6 +33,7 @@ $ slog
 | `slog edit [日期]` | 编辑/补记某天，文件不存在会自动新建 |
 | `slog recent [N]` | 最近 N 天一览（默认 7） |
 | `slog search 关键词` | 全文搜索所有日志（不区分大小写） |
+| `slog review` | 汇总最近一篇的还没懂/卡点，标注首次出现日期 |
 | `slog stats` | 总天数、当前/最长连续天数、科目分布 |
 | `slog path` | 显示日志目录 |
 
@@ -46,6 +46,17 @@ $ slog
 - `明天第一件事` 中未勾选的 `- [ ]` 条目（已勾 `[x]` 的跳过）
 
 已经解决的，在编辑器里删掉那一行即可；完成了待办就补上 `[x]`。
+
+## 备份
+
+在日志目录 `git init` 后，slog 会在每次编辑保存后自动提交一个本地快照（纯本地，不联网）：
+
+```zsh
+cd ~/Desktop/University/Learning\ log
+git init && git add -A && git commit -m "初始快照"
+```
+
+日志目录不是 git 仓库时，此功能自动不生效。
 
 ## 数据格式
 
@@ -86,4 +97,9 @@ Learning log/
 
 ## 卸载
 
-删除 `~/.zshrc` 中的 alias 行和 slog 目录即可，日志文件不受任何影响。
+删除 `~/.local/bin/slog` 软链接和 slog 目录即可，日志文件（含日志目录里的 git 快照）不受任何影响。
+
+## 许可
+
+[MIT](LICENSE)
+

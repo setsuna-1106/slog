@@ -280,6 +280,21 @@ def open_in_editor(f):
         die(f"找不到编辑器「{editor}」，可用 export EDITOR=code\\ -w 指定")
 
 
+def snapshot(d, day):
+    """日志目录是 git 仓库时，自动把改动提交为本地快照（纯本地，不联网）。"""
+    if not (d / ".git").exists():
+        return
+    try:
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=d, capture_output=True, text=True)
+        if git("status", "--porcelain").stdout.strip():
+            git("add", "-A")
+            git("commit", "-m", day.isoformat(), "--quiet")
+            print(dim(f"已快照 git: {day.isoformat()}"))
+    except OSError:
+        pass
+
+
 # ---------- 输出 ----------
 
 def print_log(day, text):
@@ -336,6 +351,7 @@ def cmd_edit(args):
     f = ensure_log(day)
     open_in_editor(f)
     summarize(day)
+    snapshot(log_dir(), day)
 
 
 def cmd_show(args):
@@ -386,6 +402,39 @@ def cmd_search(args):
         print(dim(f"共 {hits} 条"))
     else:
         print(f"没有找到与「{args.keyword}」相关的记录")
+
+
+def cmd_review(args):
+    d = log_dir()
+    dates = log_dates(d)
+    if not dates:
+        die(f"日志目录还没有任何记录：{d}")
+    # 首次出现日期：跨全部日志统计
+    first_seen = {}
+    for day in dates:
+        secs = parse_sections(read_text(log_file(d, day)))
+        for key in (SEC_UNCLEAR, SEC_BLOCKED):
+            for _, t in nonempty_bullets(secs.get(key, [])):
+                first_seen.setdefault((key, t), day)
+    # 未解决集合：以最近一篇日志为准（未带到最近一篇的即视为已解决）
+    last_day = dates[-1]
+    secs = parse_sections(read_text(log_file(d, last_day)))
+    print(bold("遗留问题") + dim(f"（以最近一篇 {last_day.isoformat()} 为准）"))
+    shown = False
+    for key in (SEC_UNCLEAR, SEC_BLOCKED):
+        items = [t for _, t in nonempty_bullets(secs.get(key, []))]
+        if not items:
+            continue
+        shown = True
+        print()
+        print(paint(bold(key), *SECTION_STYLE[key]) + dim(f"（{len(items)}）"))
+        for t in items:
+            fd = first_seen.get((key, t))
+            note = dim(f"  首次 {fd.isoformat()}") if fd and fd < last_day else ""
+            print(f"  - {t}{note}")
+    if not shown:
+        print()
+        print(green("没有遗留问题"))
 
 
 def cmd_stats(args):
@@ -453,6 +502,7 @@ def main(argv=None):
             "  slog edit -3        补记 3 天前的日志\n"
             "  slog recent 14      最近 14 天一览\n"
             "  slog search 光学    全文搜索\n"
+            "  slog review         汇总还没懂/卡点等遗留问题\n"
             "  slog stats          连续天数与科目分布\n"
             "\n"
             "环境变量:\n"
@@ -474,6 +524,8 @@ def main(argv=None):
     sp = sub.add_parser("search", help="按关键词搜索所有日志")
     sp.add_argument("keyword", help="关键词")
 
+    sub.add_parser("review", help="汇总最近一篇的还没懂/卡点，标注首次出现日期")
+
     sub.add_parser("stats", help="统计：记录天数、连续天数、科目分布")
     sub.add_parser("path", help="显示日志目录")
 
@@ -484,6 +536,7 @@ def main(argv=None):
         "edit": cmd_edit,
         "recent": cmd_recent,
         "search": cmd_search,
+        "review": cmd_review,
         "stats": cmd_stats,
         "path": cmd_path,
     }
