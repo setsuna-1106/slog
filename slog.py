@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """slog — 极简学习记录 CLI
 
-一天一个 Markdown 文件（YYYY-MM-DD.md），五个板块，用你喜欢的编辑器书写。
+一天一个 Markdown 文件（YYYY-MM-DD.md），六个板块，用你喜欢的编辑器书写。
 数据永远是纯文本，属于你自己。
 """
 
@@ -33,6 +33,9 @@ BUILTIN_TEMPLATE = """\
 ## [!] 错误 / 卡点
 -
 
+## 每日思考
+-
+
 ## 明天第一件事
 - [ ] """
 
@@ -40,6 +43,7 @@ SEC_LEARNED = "学了什么"
 SEC_UNDERSTOOD = "弄懂了什么"
 SEC_UNCLEAR = "[?] 还没懂"
 SEC_BLOCKED = "[!] 错误 / 卡点"
+SEC_THOUGHT = "每日思考"
 SEC_TOMORROW = "明天第一件事"
 
 SECTION_STYLE = {
@@ -47,6 +51,7 @@ SECTION_STYLE = {
     SEC_UNDERSTOOD: ("36",),   # 青
     SEC_UNCLEAR: ("33",),      # 黄
     SEC_BLOCKED: ("31",),      # 红
+    SEC_THOUGHT: ("34",),      # 蓝
     SEC_TOMORROW: ("35",),     # 紫
 }
 
@@ -336,6 +341,7 @@ def summarize(day):
         ("懂", count_items(secs, SEC_UNDERSTOOD)),
         ("疑", count_items(secs, SEC_UNCLEAR)),
         ("错", count_items(secs, SEC_BLOCKED)),
+        ("思", count_items(secs, SEC_THOUGHT)),
         ("待", count_items(secs, SEC_TOMORROW, unchecked_only=True)),
     ]
     summary = " ".join(
@@ -376,6 +382,7 @@ def cmd_recent(args):
                 f"{count_items(secs, SEC_UNDERSTOOD)} 懂 "
                 f"{count_items(secs, SEC_UNCLEAR)} 疑 "
                 f"{count_items(secs, SEC_BLOCKED)} 错 "
+                f"{count_items(secs, SEC_THOUGHT)} 思 "
                 f"{count_items(secs, SEC_TOMORROW, unchecked_only=True)} 待")
         learned = nonempty_bullets(secs.get(SEC_LEARNED, []))
         first = learned[0][1] if learned else "（未填内容）"
@@ -491,7 +498,7 @@ def cmd_path(args):
 # ---------- TUI ----------
 
 ANSI_TO_CURSES = {"32": "green", "33": "yellow", "31": "red",
-                  "35": "magenta", "36": "cyan"}
+                  "35": "magenta", "36": "cyan", "34": "blue"}
 
 
 def clip_cjk(s, width):
@@ -549,7 +556,7 @@ def _tui_main(stdscr):
     if curses.has_colors():
         curses.start_color()
         curses.use_default_colors()
-        for i, name in enumerate(("green", "yellow", "red", "magenta", "cyan"), 1):
+        for i, name in enumerate(("green", "yellow", "red", "magenta", "cyan", "blue"), 1):
             curses.init_pair(i, getattr(curses, f"COLOR_{name.upper()}"), -1)
             pairs[name] = curses.color_pair(i)
 
@@ -672,7 +679,7 @@ def main(argv=None):
         argv = ["--help"]
     p = argparse.ArgumentParser(
         prog="slog",
-        description="slog — 极简学习记录：一天一个 Markdown，五个板块，编辑器书写。",
+        description="slog — 极简学习记录：一天一个 Markdown，六个板块，编辑器书写。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例:\n"
