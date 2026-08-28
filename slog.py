@@ -45,6 +45,10 @@ SEC_UNCLEAR = "[?] 还没懂"
 SEC_BLOCKED = "[!] 错误 / 卡点"
 SEC_THOUGHT = "每日思考"
 SEC_TOMORROW = "明天第一件事"
+SEC_DEBT = "[⚠] Coach 欠账"
+
+# 相对日志目录的欠账清单路径，由每晚 coach 维护；不存在则不启用
+DEBT_LEDGER_REL = Path("coach/open-items.md")
 
 SECTION_STYLE = {
     SEC_LEARNED: ("32",),      # 绿
@@ -53,6 +57,7 @@ SECTION_STYLE = {
     SEC_BLOCKED: ("31",),      # 红
     SEC_THOUGHT: ("34",),      # 蓝
     SEC_TOMORROW: ("35",),     # 紫
+    SEC_DEBT: ("31",),         # 红（升级欠账）
 }
 
 DATE_FILE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.md$")
@@ -233,9 +238,31 @@ def extract_carry(text):
     return carry
 
 
-def build_new_log(d, day, carry):
-    """按模板生成新日志，把 carry 中的条目填进对应板块（替换空占位行）。"""
+def load_debt_items(d):
+    """读 coach 欠账清单，按文件顺序返回未勾选条目（原样文本，含 [标签] 前缀）。"""
+    f = d / DEBT_LEDGER_REL
+    if not f.is_file():
+        return []
+    try:
+        secs = parse_sections(read_text(f))
+    except OSError:
+        return []
+    items = []
+    for lines in secs.values():
+        for checked, text in nonempty_bullets(lines):
+            if checked not in ("x", "X"):
+                items.append(f"- [ ] {text}")
+    return items
+
+
+def build_new_log(d, day, carry, debt=None):
+    """按模板生成新日志；欠账条目注入顶部板块，carry 中的条目填进对应板块。"""
     text = load_template(d).replace("YYYY-MM-DD", day.isoformat())
+    if debt and f"## {SEC_DEBT}" not in text:
+        lines = text.splitlines()
+        idx = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
+        block = [f"## {SEC_DEBT}"] + list(debt) + [""]
+        text = "\n".join(lines[:idx] + block + lines[idx:])
     out, section, emitted = [], None, set()
     for line in text.splitlines():
         m = HEADING_RE.match(line)
@@ -254,7 +281,7 @@ def build_new_log(d, day, carry):
 
 
 def ensure_log(day):
-    """返回该天日志路径；不存在则按模板新建并带入前一篇的未完成内容。"""
+    """返回该天日志路径；不存在则按模板新建并带入欠账清单与前一篇的未完成内容。"""
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     f = log_file(d, day)
@@ -262,7 +289,10 @@ def ensure_log(day):
         return f
     prev_path, prev_day = find_prev_log(d, day)
     carry = extract_carry(read_text(prev_path)) if prev_path else {}
-    f.write_text(build_new_log(d, day, carry), encoding="utf-8")
+    debt = load_debt_items(d)
+    f.write_text(build_new_log(d, day, carry, debt), encoding="utf-8")
+    if debt:
+        print(red(f"⚠ Coach 欠账 {len(debt)} 条已带入，勾 [x] 销账，否则每天出现"))
     if prev_path and carry:
         parts = []
         if carry.get(SEC_UNCLEAR):
@@ -343,6 +373,7 @@ def summarize(day):
         ("错", count_items(secs, SEC_BLOCKED)),
         ("思", count_items(secs, SEC_THOUGHT)),
         ("待", count_items(secs, SEC_TOMORROW, unchecked_only=True)),
+        ("欠", count_items(secs, SEC_DEBT, unchecked_only=True)),
     ]
     summary = " ".join(
         paint(f"{k}{v}", "1") if v else dim(f"{k}{v}") for k, v in counts
@@ -442,6 +473,13 @@ def cmd_review(args):
     if not shown:
         print()
         print(green("没有遗留问题"))
+    debt = load_debt_items(d)
+    if debt:
+        print()
+        print(paint(bold("Coach 欠账"), *SECTION_STYLE[SEC_DEBT])
+              + dim(f"（{len(debt)} 条未销，见 {DEBT_LEDGER_REL.as_posix()}）"))
+        for item in debt:
+            print("  " + item)
 
 
 def cmd_stats(args):
@@ -688,7 +726,7 @@ def main(argv=None):
             "  slog edit -3        补记 3 天前的日志\n"
             "  slog recent 14      最近 14 天一览\n"
             "  slog search 光学    全文搜索\n"
-            "  slog review         汇总还没懂/卡点等遗留问题\n"
+            "  slog review         汇总还没懂/卡点等遗留问题与 Coach 欠账\n"
             "  slog stats          连续天数与科目分布\n"
             "  slog tui            交互式浏览（方向键选择，回车编辑）\n"
             "  slog help           显示本帮助\n"
@@ -712,7 +750,7 @@ def main(argv=None):
     sp = sub.add_parser("search", help="按关键词搜索所有日志")
     sp.add_argument("keyword", help="关键词")
 
-    sub.add_parser("review", help="汇总最近一篇的还没懂/卡点，标注首次出现日期")
+    sub.add_parser("review", help="汇总最近一篇的还没懂/卡点，标注首次出现日期，附 Coach 欠账清单")
     sub.add_parser("tui", help="交互式浏览（curses 界面）")
 
     sub.add_parser("stats", help="统计：记录天数、连续天数、科目分布")
