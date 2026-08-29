@@ -255,14 +255,9 @@ def load_debt_items(d):
     return items
 
 
-def build_new_log(d, day, carry, debt=None):
-    """按模板生成新日志；欠账条目注入顶部板块，carry 中的条目填进对应板块。"""
+def build_new_log(d, day, carry):
+    """按模板生成新日志，carry 中的条目填进对应板块。"""
     text = load_template(d).replace("YYYY-MM-DD", day.isoformat())
-    if debt and f"## {SEC_DEBT}" not in text:
-        lines = text.splitlines()
-        idx = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
-        block = [f"## {SEC_DEBT}"] + list(debt) + [""]
-        text = "\n".join(lines[:idx] + block + lines[idx:])
     out, section, emitted = [], None, set()
     for line in text.splitlines():
         m = HEADING_RE.match(line)
@@ -281,7 +276,7 @@ def build_new_log(d, day, carry, debt=None):
 
 
 def ensure_log(day):
-    """返回该天日志路径；不存在则按模板新建并带入欠账清单与前一篇的未完成内容。"""
+    """返回该天日志路径；不存在则按模板新建并带入前一篇的未完成内容。"""
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     f = log_file(d, day)
@@ -289,10 +284,7 @@ def ensure_log(day):
         return f
     prev_path, prev_day = find_prev_log(d, day)
     carry = extract_carry(read_text(prev_path)) if prev_path else {}
-    debt = load_debt_items(d)
-    f.write_text(build_new_log(d, day, carry, debt), encoding="utf-8")
-    if debt:
-        print(red(f"⚠ Coach 欠账 {len(debt)} 条已带入，勾 [x] 销账，否则每天出现"))
+    f.write_text(build_new_log(d, day, carry), encoding="utf-8")
     if prev_path and carry:
         parts = []
         if carry.get(SEC_UNCLEAR):
@@ -373,7 +365,6 @@ def summarize(day):
         ("错", count_items(secs, SEC_BLOCKED)),
         ("思", count_items(secs, SEC_THOUGHT)),
         ("待", count_items(secs, SEC_TOMORROW, unchecked_only=True)),
-        ("欠", count_items(secs, SEC_DEBT, unchecked_only=True)),
     ]
     summary = " ".join(
         paint(f"{k}{v}", "1") if v else dim(f"{k}{v}") for k, v in counts
